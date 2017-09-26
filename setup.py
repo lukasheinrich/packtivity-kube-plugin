@@ -11,7 +11,7 @@ setup(
   author_email = 'lukas.heinrich@cern.ch',
   packages = find_packages(),
   include_package_data = True,
-  install_requires = deps,
+  install_requires = [],
   entry_points = {
   },
   dependency_links = [
