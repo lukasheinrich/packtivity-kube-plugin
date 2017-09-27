@@ -15,12 +15,13 @@ cd ..
 
 ## Install yadage
 
+```
 scl enable rh-python34 zsh
 virtualenv venv
 source venv/bin/activate
 
 pip install networkx==1.11 kubernetes yadage https://github.com/lukasheinrich/packtivity-kube-plugin/archive/master.zip
-
+```
 
 ## Configure the yadage backend for Kubernetes
 
