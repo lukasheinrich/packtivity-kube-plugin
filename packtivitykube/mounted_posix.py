@@ -142,3 +142,6 @@ def setup_provider(dataarg,dataopts):
     if mountspec:
         mountspec = yaml.load(open(mountspec))
     return MountedFSProvider(mountspec, MountedFSState([os.path.join('/',dataarg)]))
+
+def load_state(jsondata):
+    return MountedFSState.fromJSON(jsondata)
