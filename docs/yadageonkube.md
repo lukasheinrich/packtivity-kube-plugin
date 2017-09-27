@@ -19,7 +19,6 @@ cd ..
 scl enable rh-python34 zsh
 virtualenv venv
 source venv/bin/activate
-
 pip install yadage packtivity-kube-plugin
 ```
 
