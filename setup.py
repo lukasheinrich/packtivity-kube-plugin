@@ -11,10 +11,11 @@ setup(
   author_email = 'lukas.heinrich@cern.ch',
   packages = find_packages(),
   include_package_data = True,
-  install_requires = [],
+  install_requires = [
+      'kubernetes'
+  ],
   entry_points = {
   },
   dependency_links = [
-      'kubernetes'
   ]
 )
