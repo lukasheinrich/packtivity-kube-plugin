@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 setup(
   name = 'packtivity-kube-plugin',
-  version = '0.0.3',
+  version = '0.0.4',
   description = 'packtivity kubernetes plugin',
   url = '',
   author = 'Lukas Heinrich',
