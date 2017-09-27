@@ -8,17 +8,22 @@ import logging
 import uuid
 import os
 import jq
-
+import base64
+import json
+import time
 
 log = logging.getLogger(__name__)
 
 class KubeProxy(PacktivityProxyBase):
-    def __init__(self, job_id, spec, pars, state, result = None):
+    def __init__(self, job_id, spec, pars, state, result = None, cleaned = False, success = False, failed = False):
         self.job_id = job_id
         self.spec = spec
         self.pars = pars
         self.state = state
         self.result = result
+        self.cleaned = cleaned
+        self.last_success = success
+        self.last_failed = failed
 
     def proxyname(self):
         return 'KubeProxy'
@@ -29,7 +34,10 @@ class KubeProxy(PacktivityProxyBase):
             'spec': self.spec,
             'pars':self.pars,
             'state':self.state.json(),
-            'result': None
+            'result': self.result,
+            'cleaned': self.cleaned,
+            'last_success': self.last_success,
+            'last_failed': self.last_failed
         }
 
     @classmethod
@@ -39,13 +47,19 @@ class KubeProxy(PacktivityProxyBase):
             data['proxydetails']['spec'],
             data['proxydetails']['pars'],
             load_state(data['proxydetails']['state']),
-            data['proxydetails']['result']
+            data['proxydetails']['result'],
+            data['proxydetails']['cleaned'],
+            data['proxydetails']['last_success'],
+            data['proxydetails']['last_failed']
         )
 
 class KubeBackend(object):
-    def __init__(self,kubeconfigloc = None):
+    def __init__(self,kubeconfigloc = None, loglevel = 'INFO', job_resources = None):
+        log.setLevel(getattr(logging,loglevel))
         config.load_kube_config(kubeconfigloc or os.path.join(os.environ['HOME'],'.kube/config'))
         self.config = packconfig()
+        self.job_resources = job_resources
+        log.info('will submit with resources: %s', self.job_resources)
 
     def prepublish(self, spec, parameters, state):
         return None
@@ -64,6 +78,8 @@ class KubeBackend(object):
                              auth = False)
 
         mainjobspec = jobspecs[0]
+        if self.job_resources:
+            mainjobspec['spec']['template']['spec']['containers'][0].setdefault('resources',{})['requests']  = self.job_resources
         jobid = mainjobspec['metadata']['name']
         
         thejob = client.V1Job(
@@ -78,11 +94,11 @@ class KubeBackend(object):
             cm_spec = jobspecs[1]
             cm = client.V1ConfigMap(api_version = 'v1', kind = 'ConfigMap', metadata = {'name': cm_spec['name']}, data = cm_spec['data'])
             client.CoreV1Api().create_namespaced_config_map('default',cm)
-            log.info(cm)
-            log.info('created configmap for parmounts')
+            log.debug(cm)
+            log.debug('created configmap for parmounts')
 
 
-        log.info(thejob)
+        log.debug(thejob)
         client.BatchV1Api().create_namespaced_job('default',thejob)                                                               
 
         log.info('submitted job: %s', jobid)
@@ -94,29 +110,46 @@ class KubeBackend(object):
         )
 
     def result(self, resultproxy):
-        prepub = prepublish_default(
-            resultproxy.spec,resultproxy.pars, resultproxy.state
-        )
+        log.debug('result? %s',resultproxy.job_id)
         if resultproxy.result:
-            log.info('found cached result %s', resultproxy.result)
+            log.debug('found cached result %s', resultproxy.result)
             return resultproxy.result
-        if prepub:
-            return prepub
-        log.info('cannot prepublish for job id {}.. submitting publisher pod'.format(resultproxy.job_id))
-        pubdata =  publish(resultproxy.job_id,resultproxy.spec['publisher'],resultproxy.pars,resultproxy.state)
-        log.info('caching result in proxy')
-        resultproxy.result = pubdata
+        else:
+            prepub = prepublish_default(
+                resultproxy.spec,resultproxy.pars, resultproxy.state
+            )
+            if prepub:
+                log.info('caching prepublished data.')
+                resultproxy.result = prepub
+            else:
+                log.info('cannot prepublish for job id {}.. submitting publisher pod'.format(resultproxy.job_id))
+                pubdata =  publish(resultproxy.job_id,resultproxy.spec['publisher'],resultproxy.pars,resultproxy.state)
+                log.info('caching result in proxy')
+                resultproxy.result = pubdata
         return resultproxy.result
         
 
 
     def ready(self, resultproxy):
+        log.debug('ready? %s',resultproxy.job_id)
+        if resultproxy.cleaned:
+            log.debug('already cleaned so yes..')
+            return True
+        log.debug('getting jostatus from k8s')
         jobstatus = client.BatchV1Api().read_namespaced_job(resultproxy.job_id,'default').status
-        return jobstatus.failed or jobstatus.succeeded
+        resultproxy.last_success = jobstatus.succeeded
+        resultproxy.last_failed  = jobstatus.failed
+        ready =  resultproxy.last_success or resultproxy.last_failed
+        log.debug('is ready.. could delete')
+        if ready and resultproxy.result and (not resultproxy.cleaned):
+            delete_job_and_pods(resultproxy.job_id)
+            resultproxy.cleaned = True
+        return ready
 
     def successful(self, resultproxy):
-        jobstatus = client.BatchV1Api().read_namespaced_job(resultproxy.job_id,'default').status
-        return jobstatus.succeeded
+        log.debug('success? %s',resultproxy.job_id)
+        self.ready(resultproxy)
+        return resultproxy.last_success
 
     def fail_info(self, resultproxy):
         pass
@@ -126,7 +159,7 @@ def state_binds(state):
     container_mounts = []
     volumes = []
 
-    log.info('mountspec: %s', state.mountspec)
+    log.debug('mountspec: %s', state.mountspec)
 
     for i,path in enumerate(state.readwrite + state.readonly):
         container_mounts.append({
@@ -145,7 +178,7 @@ def cvmfs_binds():
     container_mounts = []
     volumes = []
     
-    log.info('binding CVMFS')
+    log.debug('binding CVMFS')
     for repo in ['atlas.cern.ch','sft.cern.ch','atlas-condb.cern.ch']:
         reponame = repo.replace('.','').replace('-','')
         volumes.append({
@@ -252,7 +285,7 @@ def make_par_mount(job_uuid, parameters, parmounts):
             'key': configkey, 'path': basename
         })
 
-    log.info(vols_by_dir_name)
+    log.debug(vols_by_dir_name)
 
 
     for dirname,volspec in vols_by_dir_name.items():
@@ -263,8 +296,6 @@ def make_par_mount(job_uuid, parameters, parmounts):
         
     return parmount_configmap_contmount, vols_by_dir_name.values(), configmapspec
 
-import base64
-import json
 def publish_job(job_uuid,pubspec,parameters,state):
     pubinput = {
         'parameters': parameters,
@@ -316,7 +347,18 @@ def publish_job(job_uuid,pubspec,parameters,state):
     }
     return spec
 
-import time
+def get_job_and_pods(jobname):
+    job = client.BatchV1Api().read_namespaced_job(jobname,'default')
+    pods = client.CoreV1Api().list_namespaced_pod('default',label_selector = 'job-name={}'.format(jobname)).items
+    return job,pods
+
+def delete_job_and_pods(jobname):
+    log.debug('deleting job and associated pods of jobname %s', jobname)
+    j = client.BatchV1Api().read_namespaced_job(jobname,'default')
+    client.BatchV1Api().delete_namespaced_job(jobname,'default',j.spec)
+    client.CoreV1Api().delete_collection_namespaced_pod('default',label_selector = 'job-name={}'.format(jobname))
+
+
 def publish(job_uuid,pubspec,parameters,state):
 
     pubjobspec = publish_job(job_uuid,pubspec,parameters,state)
@@ -331,12 +373,12 @@ def publish(job_uuid,pubspec,parameters,state):
 
     client.BatchV1Api().create_namespaced_job('default',thejob)
 
-    log.info('submitted publishing job for %s', job_uuid)
+    log.debug('submitted publishing job for %s', job_uuid)
     while True:
-        log.info('checking publishing job for %s', job_uuid)
+        log.debug('checking publishing job for %s', job_uuid)
         jobstatus = client.BatchV1Api().read_namespaced_job(thejob.metadata['name'],'default').status
         if jobstatus.succeeded:
-            log.info('publishing job for %s succeeded', job_uuid)
+            log.debug('publishing job for %s succeeded', job_uuid)
             break
         if jobstatus.failed:
             raise RuntimeError('simple publish pod failed?')
@@ -346,5 +388,7 @@ def publish(job_uuid,pubspec,parameters,state):
     p = client.CoreV1Api().list_namespaced_pod('default',label_selector = 'job-name={}'.format(thejob.metadata['name'])).items[0]
     pubdata =  json.loads(base64.b64decode(client.CoreV1Api().read_namespaced_pod_log(p.metadata.name,'default')).decode('utf-8'))
 
-    log.info('publishing job for %s published data %s', job_uuid, pubdata)
+    delete_job_and_pods(thejob.metadata['name'])
+
+    log.debug('publishing job for %s published data %s', job_uuid, pubdata)
     return pubdata
