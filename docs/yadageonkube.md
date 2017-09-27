@@ -9,6 +9,13 @@ magnum cluster-config kubeyadage > setup.sh && source setup.sh
 cd ..
 ```
 
+## Let's create some Storage
+
+```
+manila create --share-type "Geneva CephFS Testing" --name kubeyadage cephfs 100
+manila access-allow kubeyadage cephx kubeyadage-user
+```
+
 ## Install yadage
 
 ```
