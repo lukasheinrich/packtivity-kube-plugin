@@ -15,5 +15,6 @@ setup(
   entry_points = {
   },
   dependency_links = [
+      'kubernetes'
   ]
 )
