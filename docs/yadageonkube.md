@@ -69,3 +69,14 @@ yadage-run -b fromenv \
   -d mountspec=mount.yml \
   --metadir here
 ```
+
+or 
+
+```
+yadage-run  fromenv:workdir101 \
+   madgraph_rivet.yml \
+   -t from-github/phenochain \
+   -p nevents=100 -p rivet_analysis=MC_GENERIC \
+  -d mountspec=mount.yml \
+  --metadir here2   
+```
