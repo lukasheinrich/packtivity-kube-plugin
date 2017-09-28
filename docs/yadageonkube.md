@@ -73,7 +73,8 @@ yadage-run -b fromenv \
 or 
 
 ```
-yadage-run  fromenv:workdir101 \
+yadage-run -b fromenv \
+  fromenv:workdir101 \
    madgraph_rivet.yml \
    -t from-github/phenochain \
    -p nevents=100 -p rivet_analysis=MC_GENERIC \
