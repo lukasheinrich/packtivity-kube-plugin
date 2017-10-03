@@ -135,7 +135,7 @@ class MountedFSProvider(object):
 
     @classmethod
     def fromJSON(cls,jsondata):
-        return cls(MountedFSState.fromJSON(jsondata['mountspec'],jsondata['base_state']), nest = jsondata['nest'])
+        return cls(jsondata['mountspec'], MountedFSState.fromJSON(jsondata['base_state']), nest = jsondata['nest'])
 
 def setup_provider(dataarg,dataopts):
     mountspec = dataopts.get('mountspec',None)
@@ -145,3 +145,6 @@ def setup_provider(dataarg,dataopts):
 
 def load_state(jsondata):
     return MountedFSState.fromJSON(jsondata)
+
+def load_provider(jsondata):
+    return MountedFSProvider.fromJSON(jsondata)
