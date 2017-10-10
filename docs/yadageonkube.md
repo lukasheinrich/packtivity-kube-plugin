@@ -2,7 +2,7 @@
 
 ```
 source ~/openstack/container.sh
-magnum cluster-create --name kubeyadage --keypair-id openstack --cluster-template kubernetes --node-count 5
+magnum cluster-create --name kubeyadage --keypair openstack --cluster-template kubernetes --node-count 5
 mkdir -p yadageonkube/magnum
 cd yadageonkube/magnum
 magnum cluster-config kubeyadage > setup.sh && source setup.sh
