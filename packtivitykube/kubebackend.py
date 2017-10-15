@@ -11,6 +11,7 @@ import jq
 import base64
 import json
 import time
+import yaml
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +76,8 @@ class KubeBackend(object):
         jobspecs = job_specs(interpreter, script, parameters, image, tag, state,
                              cvmfs = 'CVMFS' in spec['environment']['resources'],
                              parmounts = spec['environment']['par_mounts'],
-                             auth = False)
+                             auth = True #'GRIProxy' in spec['environment']['resources']
+                             )
 
         mainjobspec = jobspecs[0]
         if self.job_resources:
@@ -110,11 +112,12 @@ class KubeBackend(object):
         )
 
     def result(self, resultproxy):
-        log.debug('result? %s',resultproxy.job_id)
-        if resultproxy.result:
+        log.debug('result for %s %s',resultproxy.job_id, resultproxy.result)
+        if resultproxy.result is not None:
             log.debug('found cached result %s', resultproxy.result)
             return resultproxy.result
         else:
+            log.info("we don't have a result yet for job %s", resultproxy.job_id)
             prepub = prepublish_default(
                 resultproxy.spec,resultproxy.pars, resultproxy.state
             )
@@ -140,8 +143,8 @@ class KubeBackend(object):
         resultproxy.last_success = jobstatus.succeeded
         resultproxy.last_failed  = jobstatus.failed
         ready =  resultproxy.last_success or resultproxy.last_failed
-        log.debug('is ready.. could delete')
-        if ready and resultproxy.result and (not resultproxy.cleaned):
+        if ready and (resultproxy.result is not None) and (not resultproxy.cleaned):
+            log.info('job %s is ready. delete. success: %s failed: %s',resultproxy.job_id, resultproxy.last_success, resultproxy.last_failed)
             delete_job_and_pods(resultproxy.job_id)
             resultproxy.cleaned = True
         return ready
@@ -173,6 +176,23 @@ def state_binds(state):
     })
     volumes[0].update(state.mountspec)
     return container_mounts, volumes    
+
+
+def auth_binds():
+    container_mounts = []
+    volumes = []
+
+    log.debug('binding auth')
+    volumes.append({
+        'name': 'hepauth',
+        'secret': yaml.load(open('secret.yml'))
+    })
+    container_mounts.append({
+        "name": 'hepauth',
+        "mountPath": '/recast_auth'
+    })
+    return container_mounts, volumes
+
 
 def cvmfs_binds():
     container_mounts = []
@@ -213,6 +233,11 @@ def job_specs(interpreter,script, parameters, image,imagetag,state, cvmfs, parmo
         container_mounts += container_mounts_cvmfs
         volumes          += volumes_cvmfs
 
+    if auth:
+        container_mounts_auth, volumes_auth = auth_binds()
+        container_mounts += container_mounts_auth
+        volumes          += volumes_auth
+
     if parmounts:
         container_mounts_pm, volumes_pm, pm_cm_spec = make_par_mount(job_uuid, parameters, parmounts)
         container_mounts += container_mounts_pm
@@ -229,6 +254,7 @@ def job_specs(interpreter,script, parameters, image,imagetag,state, cvmfs, parmo
                 "runAsUser": 0
             },
             "restartPolicy": "Never",
+            "imagePullSecrets": [{"name":"regsecret"}],
             "containers": [
               {
                 "image": ':'.join([image,imagetag]),
@@ -356,7 +382,10 @@ def delete_job_and_pods(jobname):
     log.debug('deleting job and associated pods of jobname %s', jobname)
     j = client.BatchV1Api().read_namespaced_job(jobname,'default')
     client.BatchV1Api().delete_namespaced_job(jobname,'default',j.spec)
-    client.CoreV1Api().delete_collection_namespaced_pod('default',label_selector = 'job-name={}'.format(jobname))
+
+    j,pods = get_job_and_pods(jobname)
+    print(pods[-1].metadata.name)
+    #client.CoreV1Api().delete_collection_namespaced_pod('default',label_selector = 'job-name={}'.format(jobname))
 
 
 def publish(job_uuid,pubspec,parameters,state):
@@ -390,5 +419,5 @@ def publish(job_uuid,pubspec,parameters,state):
 
     delete_job_and_pods(thejob.metadata['name'])
 
-    log.debug('publishing job for %s published data %s', job_uuid, pubdata)
+    log.info('publishing job for %s published data %s', job_uuid, pubdata)
     return pubdata
