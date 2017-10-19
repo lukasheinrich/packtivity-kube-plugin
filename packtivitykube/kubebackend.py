@@ -47,7 +47,7 @@ class KubeProxy(PacktivityProxyBase):
             data['proxydetails']['job_id'],
             data['proxydetails']['spec'],
             data['proxydetails']['pars'],
-            load_state(data['proxydetails']['state']),
+            load_state(data['proxydetails']['state'], {'state':'py:packtivitykube.mounted_posix:MountedFSState'}),
             data['proxydetails']['result'],
             data['proxydetails']['cleaned'],
             data['proxydetails']['last_success'],
